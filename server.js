@@ -15,14 +15,18 @@ const SHOPIFY_WEBHOOK_SECRET = process.env.SHOPIFY_WEBHOOK_SECRET;
 
 let appAccessToken = null;
 
-// 🔐 Save raw body for HMAC verification
+/* -----------------------------
+   RAW BODY CAPTURE
+------------------------------ */
 function rawBodySaver(req, res, buf) {
   if (buf && buf.length) {
     req.rawBody = buf.toString("utf8");
   }
 }
 
-// 🔐 Verify Shopify Webhook
+/* -----------------------------
+   VERIFY SHOPIFY WEBHOOK
+------------------------------ */
 function verifyShopifyWebhook(req) {
   const hmac = req.headers["x-shopify-hmac-sha256"];
   const generated = crypto
@@ -36,7 +40,48 @@ function verifyShopifyWebhook(req) {
   );
 }
 
-// 🔴 WEBHOOK HANDLER
+/* -----------------------------
+   QUEUE SYSTEM
+------------------------------ */
+
+const channelQueues = {};
+
+function ensureChannelQueue(channel) {
+  if (!channelQueues[channel]) {
+    channelQueues[channel] = {
+      active: false,
+      queue: []
+    };
+  }
+}
+
+function startNextGift(channel) {
+  const channelData = channelQueues[channel];
+
+  if (!channelData || channelData.active) return;
+  if (channelData.queue.length === 0) return;
+
+  const giftEvent = channelData.queue.shift();
+  channelData.active = true;
+
+  console.log(`🎁 Starting giveaway for ${channel}`);
+  console.log(`Variant ID: ${giftEvent.variantId}`);
+
+  // Simulate 10 second giveaway timer for now
+  setTimeout(() => {
+    console.log(`✅ Giveaway finished for ${channel}`);
+    channelData.active = false;
+
+    // Immediately fire next gift
+    startNextGift(channel);
+
+  }, 10000);
+}
+
+/* -----------------------------
+   WEBHOOK HANDLER
+------------------------------ */
+
 app.post("/webhook/order-paid", (req, res) => {
   try {
     if (!verifyShopifyWebhook(req)) {
@@ -46,21 +91,32 @@ app.post("/webhook/order-paid", (req, res) => {
 
     const order = req.body;
 
-    console.log("🟢 Order Received:");
-    console.log("Order ID:", order.id);
-
     const discountCode =
       order.discount_codes?.length > 0
-        ? order.discount_codes[0].code
+        ? order.discount_codes[0].code.toLowerCase()
         : null;
 
-    console.log("Discount Code:", discountCode);
+    if (!discountCode) {
+      console.log("⚠️ No discount code used");
+      return res.status(200).send("OK");
+    }
+
+    const channel = discountCode; // channel name matches code
+    ensureChannelQueue(channel);
 
     order.line_items.forEach(item => {
-      console.log("Product:", item.title);
-      console.log("Variant ID:", item.variant_id);
-      console.log("Quantity:", item.quantity);
+      for (let i = 0; i < item.quantity; i++) {
+
+        channelQueues[channel].queue.push({
+          variantId: item.variant_id,
+          productTitle: item.title
+        });
+
+        console.log(`Queued gift for ${channel} - ${item.title}`);
+      }
     });
+
+    startNextGift(channel);
 
     res.status(200).send("OK");
 
@@ -70,7 +126,10 @@ app.post("/webhook/order-paid", (req, res) => {
   }
 });
 
-// 🟢 LIVE STATUS ENDPOINT (existing)
+/* -----------------------------
+   LIVE STATUS ENDPOINT
+------------------------------ */
+
 app.get("/api/live-status", async (req, res) => {
   try {
     const username = req.query.twitch;
