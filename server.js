@@ -3,6 +3,9 @@ import axios from "axios";
 import cors from "cors";
 
 const app = express();
+app.use(cors());
+
+const app = express();
 const PORT = process.env.PORT || 3000;
 
 const TWITCH_CLIENT_ID = process.env.TWITCH_CLIENT_ID;
